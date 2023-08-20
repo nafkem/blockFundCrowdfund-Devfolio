@@ -4,19 +4,60 @@ pragma solidity ^0.8.18;
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 
-contract CrowdFunding is ReentrancyGuard{
-    event Donation(uint _amount, address _donor);
-    event Withdrawal(uint _campaign);
-    event Now(uint _thisTime);
-    string private _link;
+contract BlockCrowdFund is ReentrancyGuard{
+
+    //state variables
     uint256 public fundingGoal;
+    mapping(uint => mapping(address => bool)) public claimedRewards;
+    bool exists;
+    address public Admin;
+    uint256 public ID;
+
+
+    //events
+    event CampaignCreated(address indexed owner, string indexed campaingTitle, uint256 indexed campaignID);
+    event Donation(uint indexed CampaignID, uint256 indexed amount, address indexed donor);
+    event UncapturedDonation(uint256 indexed amount, address indexed donor);
+    event Withdrawal(uint256 indexed Campaign, address indexed Creator, uint256 indexed amount);
+
     event Refund(address indexed contributor, uint indexed campaignId, uint256 amount);
     event RefundsProcessed(uint indexed campaignId);
     event CampaignEnded(uint indexed campaignId);
-    mapping(uint => mapping(address => bool)) public claimedRewards;
 
+
+    modifier onlyOwner(){
+        require(msg.sender == Admin, "Only owner");
+        _;
+    }
+
+    // Modifier to check if a campaign exists
+    modifier campaignExist(uint _campaignID) {
+        require(campaigns[_campaignID].exist == true, "Inavlid Campaign");
+        _;
+    }
+
+    // Add ownership and Creator control functions
+    modifier onlyCreator(uint _campaignID) {
+        require(msg.sender == campaigns[_campaignID].owner, "Only Creator");
+        _;
+    }
+
+        // Modifier to check if a campaign is active (deadline not reached)
+    modifier campaignActive(uint _campaignID){
+        require(campaigns[_campaignID].deadline > block.timestamp , "Inactive Campaign");
+        _;
+    }
+
+    // Modifier to check if a campaign has received donations before withdrawing funds
+    modifier campaignHasDonations(uint _campaignID){
+        require(campaigns[_campaignID].amountRealised > 0, "No donations");
+        _;
+    }
+
+    //enums
     enum CampaignStatus {Active, Expired, GoalReached}
 
+    //structs
     struct Campaign {
         address owner;
         string title;
@@ -24,7 +65,11 @@ contract CrowdFunding is ReentrancyGuard{
         uint256 targetAmount;
         uint256 deadline;
         uint256 amountRealised;
-
+        uint256 id;
+        string  link;
+        address[] donors;
+        bool exist;
+        bool goalReached;
     }
 
     Campaign[] public campaigns;
@@ -32,83 +77,109 @@ contract CrowdFunding is ReentrancyGuard{
     // Mapping to keep track of which addresses have contributed to a campaign
     mapping(uint256 => mapping(address=>bool)) public contributedToCampaign;
     
-    // Mapping to keep track of all the donors for a campaign
-    mapping(uint => address[]) public donors;
 
-    // Fallback function to receive donations
-    receive() external payable {
-        emit Donation(msg.value, msg.sender);
+    //constructor
+    constructor(){
+        Admin = msg.sender;
     }
 
-    // Modifier to check if a campaign exists
-    
-    modifier campaignExist(uint _id) {
-    bool exists = false;
-    for (uint i = 0; i < campaigns.length; i++) {
-        if (i == _id) {
-            exists = true;
-            break;
-        }
-    }
-    require(exists, "User does not belong to any campaign");
-    _;
-    }
-    // Add ownership and admin control functions
-    modifier onlyAdminOrOwner(uint _id) {
-    require(msg.sender == owner || msg.sender == campaigns[_id].owner, "Only admin or owner can perform this action");
-    _;
-    }
 
-function updateCampaignDetails(uint _id, string memory _title, string memory _description) external onlyAdminOrOwner(_id) {
-    campaigns[_id].title = _title;
-    campaigns[_id].description = _description;
-}
 
-    // Modifier to check if a campaign is active (deadline not reached)
-    modifier campaignActive(uint _id){
-        require(campaigns[_id].deadline > block.timestamp , "campaign no longer active");
-        _;
-    }
-
-    // Modifier to check if a campaign has received donations before withdrawing funds
-    modifier campaignHasDonations(uint _id){
-        require(campaigns[_id].amountRealised > 0, "no donations to withdraw");
-        _;
-    }
 
     // Function to create a new campaign
-    function createCampaign(string memory _title, string memory  _description, uint256 _target, uint256 _deadline) public returns (bool) {
-        require(msg.sender != address(0), "address is not valid");
-        require(_deadline > block.timestamp, "The deadline should be a date in the future.");
-        campaigns.push(Campaign({
-            owner:msg.sender,
-            title:_title,
-            description:_description,
-            targetAmount:_target,
-            deadline:_deadline,
-            amountRealised:0
-        }));
+    function createCampaign(string memory _title, string memory  _description, uint256 _target, uint256 _deadline, string memory _ProjectDocumentlink) public returns (bool) {
+        require(_target > 0, "Invalid amount");
+        uint256 campaignID = ID;
+        uint256 campaignDeadline = block.timestamp + _deadline;
+
+        require(campaignDeadline > block.timestamp, "Invalid Deadline");
+
+        campaigns[campaignID].owner = msg.sender;
+        campaigns[campaignID].title = _title;
+        campaigns[campaignID].description = _description;
+        campaigns[campaignID].targetAmount = _target;
+        campaigns[campaignID].deadline = campaignDeadline;
+        campaigns[campaignID].id = ID;
+        campaigns[campaignID].link = _ProjectDocumentlink;
+        campaigns[campaignID].exist = true;
+
+        ID++;
+        emit CampaignCreated(msg.sender, _title, campaignID);
 
         return true;
     }
 
     // Function to donate to a campaign
-    function donateToCampaign(uint256 _id) public campaignExist(_id) campaignActive(_id) payable {
-        emit Now(block.timestamp);
-        require(msg.value > 0, "you cannot donate anything less than zero");
-        campaigns[_id].amountRealised += msg.value;
-        contributedToCampaign[_id][msg.sender] = true;
-        donors[_id].push(msg.sender);
+    function donateToCampaign(uint256 _campaignID) public campaignExist(_campaignID) campaignActive(_campaignID) payable {
+        require(msg.value > 0, "Invalid Donation");
+        require(campaigns[_campaignID].goalReached == false, "Donations Complete");
+
+        uint256 amountRaised = campaigns[_campaignID].amountRealised + msg.value;
+
+        if(amountRaised >= campaigns[_campaignID].targetAmount){
+            campaigns[_campaignID].goalReached = true;
+        }
+        if(contributedToCampaign[_campaignID][msg.sender] = false){
+            contributedToCampaign[_campaignID][msg.sender] = true;
+            campaigns[_campaignID].donors.push(msg.sender);
+
+        }
+
+        campaigns[_campaignID].amountRealised += msg.value;
+
+        emit Donation(_campaignID, msg.value, msg.sender);
     }
 
-    // Function to update the campaign's current funding amount and tracks the contributor's address
-    function updateCampaignFund(uint256 _id) external view returns(uint256){
-    return campaigns[ _id].amountRealised;
+
+    //function to update campaign details
+    function updateCampaignDetails(uint _campaignID, string memory _description, string memory _ProjectDocumentlink) external campaignActive(_campaignID) onlyCreator(_campaignID) {
+        require(campaigns[_campaignID].amountRealised <= 0, "Can't Update");
+        campaigns[_campaignID].description = _description;
+        campaigns[_campaignID].link = _ProjectDocumentlink;
     }
 
-    // Function to get all the donors for a campaign
-    function getAllDonors(uint _id) view public campaignExist(_id) returns (address[] memory) {
-        return donors[_id];
+
+    // Function to withdraw donations for a campaign
+    function withdrawDonationsForACampaign(uint _campaignID) nonReentrant external campaignExist(_campaignID) onlyCreator(_campaignID){
+        require(campaigns[_campaignID].goalReached == true, "Didn't reach goal");
+      //  require(campaigns[_campaignID].deadline < block.timestamp, "Campaign ON");
+
+        uint totalAmountDonated = campaigns[_campaignID].amountRealised;
+        campaigns[_campaignID].amountRealised = 0;
+        (bool success, ) = msg.sender.call{value: totalAmountDonated}("");
+        require(success, "withdrawal failed");
+      
+        emit Withdrawal(_campaignID, msg.sender, totalAmountDonated);
+    }
+
+
+
+    // Function for investors to claim their rewards
+    function claimRewards(uint _campaignID) external campaignExist(_campaignID) {
+        require(campaigns[_campaignID].amountRealised >= campaigns[_campaignID].targetAmount, "Campaign not funded");
+        require(!claimedRewards[_campaignID][msg.sender], "Rewards already claimed");
+
+        // Perform reward distribution (transfer tokens or perform other actions)
+        
+        claimedRewards[_campaignID][msg.sender] = true;
+    }
+
+
+
+    
+    // Function to get all donors of a campaign
+    function getDonors(uint _campaignID) view public campaignExist(_campaignID) returns (address[] memory){
+        return campaigns[_campaignID].donors;
+    }
+
+        // Function to view the campaign's current funding amount and tracks the contributor's address
+    function updateCampaignFund(uint256 _campaignID) external view returns(uint256){
+      return campaigns[ _campaignID].amountRealised;
+    }
+
+    // Function to check if a user had donate or not
+    function donated(uint _campaignID) view public campaignExist(_campaignID) returns (bool) {
+        return contributedToCampaign[_campaignID][msg.sender];
     }
 
     // Function to get all the campaigns
@@ -117,78 +188,15 @@ function updateCampaignDetails(uint _id, string memory _title, string memory _de
     }
 
     // Function to get a particular campaign
-    function getAParticularCampaign(uint _id) view public campaignExist(_id) returns(Campaign memory){
-       return campaigns[_id];
-    }
-    // Add a mapping to track claimed rewards
-
-
-    // Function for investors to claim their rewards
-    function claimRewards(uint _id) external campaignExist(_id) {
-    require(campaigns[_id].amountRealised >= campaigns[_id].targetAmount, "Campaign not funded");
-    require(!claimedRewards[_id][msg.sender], "Rewards already claimed");
-
-    // Perform reward distribution (transfer tokens or perform other actions)
-    
-    claimedRewards[_id][msg.sender] = true;
-    }
-    // Function to calculate and return the percentage of funding achieved
-    function calculatePercentageFunding(uint _id) external view returns (uint) {
-    return (campaigns[_id].amountRealised * 100) / campaigns[_id].targetAmount;
+    function getCampaign(uint _campaignID) view public campaignExist(_campaignID) returns(Campaign memory){
+       return campaigns[_campaignID];
     }
 
-    
-    // Function to distribute token rewards
-    function distributeTokenRewards(uint _id, uint256 tokenAmount) external campaignExist(_id) onlyOwner {
-    require(campaigns[_id].amountRealised >= campaigns[_id].targetAmount, "Campaign not funded");
 
-    // Assuming you have a transfer function in your token contract
-    YourTokenContract(tokenAddress).transfer(msg.sender, tokenAmount);
+    // Fallback function to receive donations
+    receive() external payable {
+        emit UncapturedDonation(msg.value, msg.sender);
+    }
+
+
 }
-
-    
-    // Function to get donors of a campaign
-    function getDonors(uint _id) view public campaignActive(_id) returns (address[] memory){
-        return donors[_id];
-    }
-    // Functions that activate appropriate actions if the campaign has ended.
-    function endCampaign(uint _id) external campaignExist(_id) {
-    require(block.timestamp >= campaigns[_id].deadline, "Campaign has not yet ended");
-    
-    if (campaigns[_id].amountRealised >= campaigns[_id].targetAmount) {
-    } else {
-        // Goal was not reached, perform actions such as refunding contributions
-        for (uint i = 0; i < donors[_id].length; i++) {
-            address contributor = donors[_id][i];
-            if (contributedToCampaign[_id][contributor]) {
-                uint256 contributionAmount = campaigns[_id].amountRealised / donors[_id].length;
-                contributedToCampaign[_id][contributor] = false;
-                (bool success, ) = contributor.call{value: contributionAmount}("");
-                require(success, "Refund failed");
-       
-                // Emit refund-related event
-                emit Refund(contributor, _id, contributionAmount);
-            }
-        }
-        
-        // Update refund status in campaign and donor mappings
-        campaigns[_id].amountRealised = 0; 
-        donors[_id] = new address[](0); 
-        emit RefundsProcessed(_id);
-
-    }
-
-    emit CampaignEnded(_id);
-}
-    // Function to withdraw donations for a campaign
-    function withdrawDonationsForACampain(uint _id) nonReentrant external campaignExist(_id) campaignHasDonations(_id) {
-        uint totalAmountDonated = campaigns[_id].amountRealised;
-        campaigns[_id].amountRealised = 0;
-        (bool success, ) = campaigns[_id].owner.call{value: totalAmountDonated}("");
-        require(success, "withdrawal failed");
-      
-
-        emit Withdrawal(_id);
-    }
-}
-
