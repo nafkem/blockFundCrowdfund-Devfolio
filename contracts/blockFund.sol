@@ -75,7 +75,8 @@ contract BlockCrowdFund is ReentrancyGuard{
         bool refunded;
     }
 
-    Campaign[] public campaigns;
+  
+    mapping(uint256 => Campaign ) campaigns;
 
     // Mapping to keep track of which addresses have contributed to a campaign
     mapping(uint256 => mapping(address => bool)) public contributedToCampaign;
@@ -93,9 +94,12 @@ contract BlockCrowdFund is ReentrancyGuard{
     function createCampaign(string memory _title, string memory  _description, uint256 _target, uint256 _deadline, string memory _ProjectDocumentlink) public returns (uint256) {
         require(_target > 0, "Invalid amount");
         uint256 campaignID = ID;
+        ID++;
         uint256 campaignDeadline = block.timestamp + _deadline;
 
         require(campaignDeadline > block.timestamp, "Invalid Deadline");
+
+
 
         campaigns[campaignID].owner = msg.sender;
         campaigns[campaignID].title = _title;
@@ -106,7 +110,6 @@ contract BlockCrowdFund is ReentrancyGuard{
         campaigns[campaignID].link = _ProjectDocumentlink;
         campaigns[campaignID].exist = true;
 
-        ID++;
         emit CampaignCreated(msg.sender, _title, campaignID);
         return campaignID;
     }
@@ -224,7 +227,15 @@ contract BlockCrowdFund is ReentrancyGuard{
 
     // Function to get all the campaigns
     function getAllCampaigns() public view returns (Campaign[] memory) {
-        return campaigns;
+
+        Campaign[] memory allCampaigns = new Campaign[](ID);
+
+        for(uint i=0; i < ID; i++){
+           allCampaigns[i] = campaigns[i];
+        }
+
+        return allCampaigns;
+        
     }
 
     // Function to get a particular campaign
