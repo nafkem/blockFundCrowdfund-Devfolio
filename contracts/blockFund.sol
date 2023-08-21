@@ -90,7 +90,7 @@ contract BlockCrowdFund is ReentrancyGuard{
 
 
     // Function to create a new campaign
-    function createCampaign(string memory _title, string memory  _description, uint256 _target, uint256 _deadline, string memory _ProjectDocumentlink) public returns (bool) {
+    function createCampaign(string memory _title, string memory  _description, uint256 _target, uint256 _deadline, string memory _ProjectDocumentlink) public returns (uint256) {
         require(_target > 0, "Invalid amount");
         uint256 campaignID = ID;
         uint256 campaignDeadline = block.timestamp + _deadline;
@@ -108,7 +108,7 @@ contract BlockCrowdFund is ReentrancyGuard{
 
         ID++;
         emit CampaignCreated(msg.sender, _title, campaignID);
-        return true;
+        return campaignID;
     }
 
     // Function to donate to a campaign
