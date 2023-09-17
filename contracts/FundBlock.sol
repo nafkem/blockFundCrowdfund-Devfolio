@@ -8,7 +8,7 @@ interface IERC721 {
     
 }
 
-contract BlockCrowdFund is ReentrancyGuard{
+contract FundBlock is ReentrancyGuard{
 
     //state variables
     uint256 public fundingGoal;
@@ -71,8 +71,6 @@ contract BlockCrowdFund is ReentrancyGuard{
         string  link;
         address[] donors;
         CampaignStatus status;
-        //bool exist;
-        //bool goalReached;
         bool refunded;
     }
 
@@ -99,8 +97,6 @@ contract BlockCrowdFund is ReentrancyGuard{
         uint256 campaignDeadline = block.timestamp + _deadline;
 
         require(campaignDeadline > block.timestamp, "Invalid Deadline");
-
-
 
         campaigns[campaignID].owner = msg.sender;
         campaigns[campaignID].title = _title;
@@ -153,6 +149,8 @@ contract BlockCrowdFund is ReentrancyGuard{
         campaigns[_campaignID].amountRealised = 0;
         (bool success, ) = msg.sender.call{value: totalAmountDonated}("");
         require(success, "withdrawal failed");
+
+        campaigns[_campaignID].status == CampaignStatus.Expired;
       
         emit Withdrawal(_campaignID, msg.sender, totalAmountDonated);
     }
@@ -161,7 +159,7 @@ contract BlockCrowdFund is ReentrancyGuard{
     // Functions refund donors
     function refundDonors(uint _campaignID) external campaignExist(_campaignID) {
         require(campaigns[_campaignID].deadline < block.timestamp, "Campaign ON");
-        require(campaigns[_campaignID].status == CampaignStatus.GoalReached, "Refund Not available");
+        require(campaigns[_campaignID].status != CampaignStatus.GoalReached, "Refund Not available");
         require(campaigns[_campaignID].refunded == false, "Already Refunded");
 
         address[] memory allDonors = campaigns[_campaignID].donors;
@@ -205,7 +203,7 @@ contract BlockCrowdFund is ReentrancyGuard{
     function claimRefunds(uint256 _campaignID) external {
         require(donorsDetails[msg.sender][_campaignID] > 0, "No Refund");
         require(campaigns[_campaignID].deadline < block.timestamp, "Campaign ON");
-        require(campaigns[_campaignID].goalReached == false, "Refund Not available");
+        require(campaigns[_campaignID].status != CampaignStatus.GoalReached, "Refund Not available");
 
         uint256 amountDonated = donorsDetails[msg.sender][_campaignID];
 
@@ -248,13 +246,7 @@ contract BlockCrowdFund is ReentrancyGuard{
     }
 
     function getCampaignStatus(uint _campaignID) view public campaignExist(_campaignID) returns(CampaignStatus){
-        if(campaigns[_campaignID].goalReached == true){
-            return CampaignStatus.GoalReached;
-        }
-        if(campaigns[_campaignID].deadline < block.timestamp){
-            return CampaignStatus.Expired;
-        }
-        return CampaignStatus.Active;
+        return campaigns[_campaignID].status;
     }
 
 
