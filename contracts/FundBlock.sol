@@ -34,7 +34,7 @@ contract FundBlock is ReentrancyGuard{
 
     // Modifier to check if a campaign exists
     modifier campaignExist(uint _campaignID) {
-        require(campaigns[_campaignID].status == CampaignStatus.Active, "Inavlid Campaign");
+        require(campaigns[_campaignID].exist == true, "Inavlid Campaign");
         _;
     }
 
@@ -71,6 +71,8 @@ contract FundBlock is ReentrancyGuard{
         string  link;
         address[] donors;
         CampaignStatus status;
+        bool exist;
+        bool goalReached;
         bool refunded;
     }
 
@@ -80,7 +82,7 @@ contract FundBlock is ReentrancyGuard{
     // Mapping to keep track of which addresses have contributed to a campaign
     mapping(uint256 => mapping(address => bool)) public contributedToCampaign;
     mapping(uint256 => mapping(address => bool)) public claimedRewards;
-    mapping(address => mapping(uint256 => uint256)) donorsDetails;
+    mapping(address => mapping(uint256 => uint256)) public donorsDetails;
 
     //constructor
     constructor(address _blockfundNft){
@@ -98,6 +100,8 @@ contract FundBlock is ReentrancyGuard{
 
         require(campaignDeadline > block.timestamp, "Invalid Deadline");
 
+
+
         campaigns[campaignID].owner = msg.sender;
         campaigns[campaignID].title = _title;
         campaigns[campaignID].description = _description;
@@ -106,6 +110,7 @@ contract FundBlock is ReentrancyGuard{
         campaigns[campaignID].id = ID;
         campaigns[campaignID].link = _ProjectDocumentlink;
         campaigns[campaignID].status = CampaignStatus.Active;
+        campaigns[campaignID].exist = true;
     
 
         emit CampaignCreated(msg.sender, _title, campaignID);
@@ -115,12 +120,12 @@ contract FundBlock is ReentrancyGuard{
     // Function to donate to a campaign
     function donateToCampaign(uint256 _campaignID) public campaignExist(_campaignID) campaignActive(_campaignID) payable {
         require(msg.value > 0, "Invalid Donation");
-        require(campaigns[_campaignID].status == CampaignStatus.GoalReached, "Donations Complete");
+        require(campaigns[_campaignID].goalReached == false, "Donations Complete");
 
         uint256 amountRaised = campaigns[_campaignID].amountRealised + msg.value;
 
         if(amountRaised >= campaigns[_campaignID].targetAmount){
-            campaigns[_campaignID].status = CampaignStatus.GoalReached;
+            campaigns[_campaignID].goalReached = true;
         }
         if(contributedToCampaign[_campaignID][msg.sender] = false){
             contributedToCampaign[_campaignID][msg.sender] = true;
@@ -142,15 +147,13 @@ contract FundBlock is ReentrancyGuard{
 
     // Function to withdraw donations for a campaign
     function withdrawDonationsForACampaign(uint _campaignID) nonReentrant external campaignExist(_campaignID) onlyCreator(_campaignID){
-        require(campaigns[_campaignID].status == CampaignStatus.GoalReached, "Goal Not Reached");
+        require(campaigns[_campaignID].goalReached == true, "Didn't reach goal");
       //  require(campaigns[_campaignID].deadline < block.timestamp, "Campaign ON");
 
         uint totalAmountDonated = campaigns[_campaignID].amountRealised;
         campaigns[_campaignID].amountRealised = 0;
         (bool success, ) = msg.sender.call{value: totalAmountDonated}("");
         require(success, "withdrawal failed");
-
-        campaigns[_campaignID].status == CampaignStatus.Expired;
       
         emit Withdrawal(_campaignID, msg.sender, totalAmountDonated);
     }
@@ -159,7 +162,7 @@ contract FundBlock is ReentrancyGuard{
     // Functions refund donors
     function refundDonors(uint _campaignID) external campaignExist(_campaignID) {
         require(campaigns[_campaignID].deadline < block.timestamp, "Campaign ON");
-        require(campaigns[_campaignID].status != CampaignStatus.GoalReached, "Refund Not available");
+        require(campaigns[_campaignID].goalReached == false, "Refund Not available");
         require(campaigns[_campaignID].refunded == false, "Already Refunded");
 
         address[] memory allDonors = campaigns[_campaignID].donors;
@@ -182,7 +185,7 @@ contract FundBlock is ReentrancyGuard{
 
     // Function for investors to claim their rewards
     function claimRewards(uint _campaignID) nonReentrant external campaignExist(_campaignID) {
-        require(campaigns[_campaignID].amountRealised >= campaigns[_campaignID].targetAmount, "Goals Not Reached");
+        require(campaigns[_campaignID].goalReached == true, "Goals Not Reached");
         require(!claimedRewards[_campaignID][msg.sender], "Rewards already claimed");
         IERC721(BlockfundNft).safeMint(msg.sender);
 
@@ -201,9 +204,11 @@ contract FundBlock is ReentrancyGuard{
 
 
     function claimRefunds(uint256 _campaignID) external {
+        require(campaigns[_campaignID].refunded != true, "Already Refunded");
         require(donorsDetails[msg.sender][_campaignID] > 0, "No Refund");
         require(campaigns[_campaignID].deadline < block.timestamp, "Campaign ON");
-        require(campaigns[_campaignID].status != CampaignStatus.GoalReached, "Refund Not available");
+        require(campaigns[_campaignID].goalReached == false, "Refund Not available");
+
 
         uint256 amountDonated = donorsDetails[msg.sender][_campaignID];
 
@@ -246,7 +251,13 @@ contract FundBlock is ReentrancyGuard{
     }
 
     function getCampaignStatus(uint _campaignID) view public campaignExist(_campaignID) returns(CampaignStatus){
-        return campaigns[_campaignID].status;
+        if(campaigns[_campaignID].goalReached == true){
+            return CampaignStatus.GoalReached;
+        }
+        if(campaigns[_campaignID].deadline < block.timestamp){
+            return CampaignStatus.Expired;
+        }
+        return CampaignStatus.Active;
     }
 
 
